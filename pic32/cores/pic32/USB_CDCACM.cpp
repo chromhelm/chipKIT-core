@@ -216,6 +216,7 @@ inline bool CDCACM::enqueuePacket()
 	if (avail > CDCACM_BULKEP_SIZE) {
             avail = CDCACM_BULKEP_SIZE;
         }
+
         
 	if((_txTail + avail) > CDCACM_BUFFER_SIZE) {
 		avail -= (_txTail + avail) % CDCACM_BUFFER_SIZE;
