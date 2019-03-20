@@ -202,31 +202,29 @@ bool CDCACM::onInPacket(uint8_t ep, uint8_t target, uint8_t __attribute__((unuse
         return true;
     }
     if (ep == _epBulk) {
-        uint32_t avail = (CDCACM_BUFFER_SIZE + _txHead - _txTail) % CDCACM_BUFFER_SIZE;
-        if (avail == 0) return false;
+        return enqueuePacket();
+    }
+    return false;
+}
 
-        if (avail > CDCACM_BULKEP_SIZE) {
+inline bool CDCACM::enqueuePacket()
+{
+	if (_txHead == _txTail) return false;
+	
+	uint32_t avail = (CDCACM_BUFFER_SIZE + _txHead - _txTail) % CDCACM_BUFFER_SIZE;
+	
+	if (avail > CDCACM_BULKEP_SIZE) {
             avail = CDCACM_BULKEP_SIZE;
         }
         
-        if((_txTail + avail) >= CDCACM_BUFFER_SIZE)
-		{
-			uint8_t tbuf[avail];
-			
-			for (uint32_t i = 0; i < avail; i++) {
-				_txTail = (_txTail + 1) % CDCACM_BUFFER_SIZE;
-				tbuf[i] = _txBuffer[_txTail];
-			}
-			_manager->enqueuePacket(_epBulk, tbuf, avail);
-		}
-		else
-		{
-			_manager->enqueuePacket(_epBulk, _txBuffer + _txTail+1, avail);
-			_txTail = (_txTail + avail) % CDCACM_BUFFER_SIZE;
-		}
-        return true;
-    }
-    return false;
+	if((_txTail + avail) > CDCACM_BUFFER_SIZE) {
+		avail -= (_txTail + avail) % CDCACM_BUFFER_SIZE;
+	}
+	
+	_manager->enqueuePacket(_epBulk, _txBuffer + _txTail, avail);
+	_txTail = (_txTail + avail) % CDCACM_BUFFER_SIZE;
+	
+	return true;
 }
 
 bool CDCACM::onOutPacket(uint8_t ep, uint8_t target, uint8_t *data, uint32_t l) {
@@ -280,36 +278,16 @@ size_t CDCACM::write(uint8_t b) {
         newhead = (h + 1) % CDCACM_BUFFER_SIZE;
     }
 
-    _txBuffer[newhead] = b;
+    _txBuffer[h] = b;
     _txHead = newhead;
 
     if (_manager->canEnqueuePacket(_epBulk)) {
         uint32_t s = disableInterrupts();
-        uint32_t avail = (CDCACM_BUFFER_SIZE + _txHead - _txTail) % CDCACM_BUFFER_SIZE;
-        if (avail > CDCACM_BULKEP_SIZE) {
-            avail = CDCACM_BULKEP_SIZE;
-        }
 		
-		if((_txTail + avail) >= CDCACM_BUFFER_SIZE)
-		{
-			uint8_t tbuf[avail];
-			
-			for (uint32_t i = 0; i < avail; i++) {
-				_txTail = (_txTail + 1) % CDCACM_BUFFER_SIZE;
-				tbuf[i] = _txBuffer[_txTail];
-			}
-			_manager->enqueuePacket(_epBulk, tbuf, avail);
-		}
-		else
-		{
-			_manager->enqueuePacket(_epBulk, _txBuffer + _txTail+1, avail);
-			_txTail = (_txTail + avail) % CDCACM_BUFFER_SIZE;
-		}
+        enqueuePacket();
 		
         restoreInterrupts(s);
     }
-
-//    _manager->sendBuffer(_epBulk, &b, 1);
     return 1;
 }
 
@@ -326,36 +304,17 @@ inline size_t CDCACM::write(uint8_t b, bool enqueuePacket) {
         newhead = (h + 1) % CDCACM_BUFFER_SIZE;
     }
 
-    _txBuffer[newhead] = b;
+    _txBuffer[h] = b;
     _txHead = newhead;
 
     if (enqueuePacket && _manager->canEnqueuePacket(_epBulk)) {
         uint32_t s = disableInterrupts();
-        uint32_t avail = (CDCACM_BUFFER_SIZE + _txHead - _txTail) % CDCACM_BUFFER_SIZE;
-        if (avail > CDCACM_BULKEP_SIZE) {
-            avail = CDCACM_BULKEP_SIZE;
-        }
 		
-		if((_txTail + avail) >= CDCACM_BUFFER_SIZE)
-		{
-			uint8_t tbuf[avail];
-			
-			for (uint32_t i = 0; i < avail; i++) {
-				_txTail = (_txTail + 1) % CDCACM_BUFFER_SIZE;
-				tbuf[i] = _txBuffer[_txTail];
-			}
-			_manager->enqueuePacket(_epBulk, tbuf, avail);
-		}
-		else
-		{
-			_manager->enqueuePacket(_epBulk, _txBuffer + _txTail+1, avail);
-			_txTail = (_txTail + avail) % CDCACM_BUFFER_SIZE;
-		}
+		this->enqueuePacket();
 		
         restoreInterrupts(s);
     }
 
-//    _manager->sendBuffer(_epBulk, &b, 1);
     return 1;
 }
 
@@ -369,21 +328,6 @@ size_t CDCACM::write(const uint8_t *b, size_t len) {
 					(((CDCACM_BUFFER_SIZE + _txHead - _txTail) % CDCACM_BUFFER_SIZE) < CDCACM_BUFFER_HIGH); // enqueue when the cdc tx buffer is high
 		write(b[i], equ);
     }
-    
-/*
-
-    size_t pos = 0;
-    int32_t slen = len;
-    uint32_t packetSize = _manager->isHighSpeed() ? 512 : 64;
-    while (pos < len) {
-        int32_t toSend = min((int32_t)packetSize, slen);
-        while (!_manager->canEnqueuePacket(_epBulk)) {
-        }
-        _manager->enqueuePacket(_epBulk, &b[pos], toSend);
-        pos += toSend;
-        slen -= toSend;
-    }
-*/
     return len;
 }
 
