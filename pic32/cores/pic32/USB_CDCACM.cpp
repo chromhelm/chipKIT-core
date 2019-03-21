@@ -209,22 +209,13 @@ bool CDCACM::onInPacket(uint8_t ep, uint8_t target, uint8_t __attribute__((unuse
             avail = CDCACM_BULKEP_SIZE;
         }
 
-        
-        if((_txTail + avail) >= CDCACM_BUFFER_SIZE)
-		{
-			uint8_t tbuf[avail];
-			
-			for (uint32_t i = 0; i < avail; i++) {
-				_txTail = (_txTail + 1) % CDCACM_BUFFER_SIZE;
-				tbuf[i] = _txBuffer[_txTail];
-			}
-			_manager->enqueuePacket(_epBulk, tbuf, avail);
-		}
-		else
-		{
-			_manager->enqueuePacket(_epBulk, _txBuffer + _txTail+1, avail);
-			_txTail = (_txTail + avail) % CDCACM_BUFFER_SIZE;
-		}
+        uint8_t tbuf[avail];
+
+        for (uint32_t i = 0; i < avail; i++) {
+            _txTail = (_txTail + 1) % CDCACM_BUFFER_SIZE;
+            tbuf[i] = _txBuffer[_txTail];
+        }
+        _manager->enqueuePacket(_epBulk, tbuf, avail);
         return true;
     }
     return false;
@@ -272,8 +263,8 @@ size_t CDCACM::write(uint8_t b) {
 
     if (_lineState == 0) return 0;
 
-    uint32_t h = _txHead;
-    uint32_t newhead = (h + 1) % CDCACM_BUFFER_SIZE;
+    volatile uint32_t h = _txHead;
+    volatile uint32_t newhead = (h + 1) % CDCACM_BUFFER_SIZE;
 
     // Wait for room
     while (newhead == _txTail) {
@@ -290,68 +281,14 @@ size_t CDCACM::write(uint8_t b) {
         if (avail > CDCACM_BULKEP_SIZE) {
             avail = CDCACM_BULKEP_SIZE;
         }
-		
-		if((_txTail + avail) >= CDCACM_BUFFER_SIZE)
-		{
-			uint8_t tbuf[avail];
-			
-			for (uint32_t i = 0; i < avail; i++) {
-				_txTail = (_txTail + 1) % CDCACM_BUFFER_SIZE;
-				tbuf[i] = _txBuffer[_txTail];
-			}
-			_manager->enqueuePacket(_epBulk, tbuf, avail);
-		}
-		else
-		{
-			_manager->enqueuePacket(_epBulk, _txBuffer + _txTail+1, avail);
-			_txTail = (_txTail + avail) % CDCACM_BUFFER_SIZE;
-		}
-		
-        restoreInterrupts(s);
-    }
 
-//    _manager->sendBuffer(_epBulk, &b, 1);
-    return 1;
-}
+        uint8_t tbuf[avail];
 
-inline size_t CDCACM::write(uint8_t b, bool enqueuePacket) {
-
-    //if (_lineState == 0) return 0;
-
-    uint32_t h = _txHead;
-    uint32_t newhead = (h + 1) % CDCACM_BUFFER_SIZE;
-
-    // Wait for room
-    while (newhead == _txTail) {
-        h = _txHead;
-        newhead = (h + 1) % CDCACM_BUFFER_SIZE;
-    }
-
-    _txBuffer[newhead] = b;
-    _txHead = newhead;
-
-    if (enqueuePacket && _manager->canEnqueuePacket(_epBulk)) {
-        uint32_t s = disableInterrupts();
-        uint32_t avail = (CDCACM_BUFFER_SIZE + _txHead - _txTail) % CDCACM_BUFFER_SIZE;
-        if (avail > CDCACM_BULKEP_SIZE) {
-            avail = CDCACM_BULKEP_SIZE;
+        for (uint32_t i = 0; i < avail; i++) {
+            _txTail = (_txTail + 1) % CDCACM_BUFFER_SIZE;
+            tbuf[i] = _txBuffer[_txTail];
         }
-		
-		if((_txTail + avail) >= CDCACM_BUFFER_SIZE)
-		{
-			uint8_t tbuf[avail];
-			
-			for (uint32_t i = 0; i < avail; i++) {
-				_txTail = (_txTail + 1) % CDCACM_BUFFER_SIZE;
-				tbuf[i] = _txBuffer[_txTail];
-			}
-			_manager->enqueuePacket(_epBulk, tbuf, avail);
-		}
-		else
-		{
-			_manager->enqueuePacket(_epBulk, _txBuffer + _txTail+1, avail);
-			_txTail = (_txTail + avail) % CDCACM_BUFFER_SIZE;
-		}
+        _manager->enqueuePacket(_epBulk, tbuf, avail);
         restoreInterrupts(s);
     }
 
@@ -362,12 +299,8 @@ inline size_t CDCACM::write(uint8_t b, bool enqueuePacket) {
 size_t CDCACM::write(const uint8_t *b, size_t len) {
 
     if (_lineState == 0) return 0;
-	
     for (uint32_t i = 0; i < len; i++) {
-		bool equ = (i == len-1) || 										// enqueue if last byte
-					(i != 0 && i % CDCACM_BULKEP_SIZE == 0) ||				// enqueue on every full bulk buffer size
-					(((CDCACM_BUFFER_SIZE + _txHead - _txTail) % CDCACM_BUFFER_SIZE) < CDCACM_BUFFER_HIGH); // enqueue when the cdc tx buffer is high
-		write(b[i], equ);
+        write(b[i]);
     }
 /*
 
