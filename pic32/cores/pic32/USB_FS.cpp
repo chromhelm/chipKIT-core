@@ -175,6 +175,10 @@ bool USBFS::addEndpoint(uint8_t id, uint8_t direction, uint8_t __attribute__((un
 	} else {
         _endpointBuffers[id].tx[0] = a;
         _endpointBuffers[id].tx[1] = b;
+        _endpointBuffers[id].directTx[0] = NULL;
+        _endpointBuffers[id].directTx[1] = NULL;
+		_endpointBuffers[id].directLength[0] = 0;
+		_endpointBuffers[id].directLength[1] = 0;
 		_bufferDescriptorTable[id][2].buffer = (uint8_t *)KVA_TO_PA((uint32_t)_endpointBuffers[id].tx[0]);
 		_bufferDescriptorTable[id][2].flags = 0;
 		_bufferDescriptorTable[id][3].buffer = (uint8_t *)KVA_TO_PA((uint32_t)_endpointBuffers[id].tx[1]);
@@ -223,32 +227,50 @@ bool USBFS::addEndpoint(uint8_t id, uint8_t direction, uint8_t __attribute__((un
 	return true;
 }
 
+uint8_t USBFS::getNextBufferIndex(uint8_t ep) {
+    return _endpointBuffers[ep].txAB;
+}
+
 bool USBFS::canEnqueuePacket(uint8_t ep) {
-    uint8_t buffer = _endpointBuffers[ep].txAB;
-    uint8_t bdt_entry = buffer ? 3 : 2;
+    const uint8_t buffer = _endpointBuffers[ep].txAB;
+    const uint8_t bdt_entry = buffer ? 3 : 2;
     if ((_bufferDescriptorTable[ep][bdt_entry].flags & 0x80) == 0) return true;
     return false;
 }
 
-bool USBFS::enqueuePacket(uint8_t ep, const uint8_t *data, uint32_t len) {
-	bool sent = false;
-
+bool USBFS::enqueuePacket(uint8_t ep, const uint8_t *data, uint32_t len, bool copy, bool direct) {	
     uint8_t buffer = _endpointBuffers[ep].txAB;
     uint8_t bdt_entry = buffer ? 3 : 2;
 
-    while (!sent) {
-        if ((_bufferDescriptorTable[ep][bdt_entry].flags & 0x80) == 0) {
-            if (len > 0) memcpy(_endpointBuffers[ep].tx[buffer], data, min(len, _endpointBuffers[ep].size));
-            _bufferDescriptorTable[ep][bdt_entry].flags = (len << 16) | 0x00 | _endpointBuffers[ep].data; 
-            sent = true;
-            _bufferDescriptorTable[ep][bdt_entry].flags |= 0x80;
-        }
+	while ((_bufferDescriptorTable[ep][bdt_entry].flags & 0x80) != 0);
+	
+	//releaseDirectBuffer(ep, buffer);
+	 
+	if (direct) {
+		_endpointBuffers[ep].directTx[buffer] = (uint8_t *)data;
+		_endpointBuffers[ep].directLength[buffer] = len;
+		_bufferDescriptorTable[ep][bdt_entry].buffer = (uint8_t *)KVA_TO_PA((uint32_t)data);
+	} else {
+		_bufferDescriptorTable[ep][bdt_entry].buffer = (uint8_t *)KVA_TO_PA((uint32_t)_endpointBuffers[ep].tx[buffer]);
+		if (copy && len > 0) memcpy(_endpointBuffers[ep].tx[buffer], data, min(len, _endpointBuffers[ep].size));
 	}
-
+	
+	_bufferDescriptorTable[ep][bdt_entry].flags = (len << 16) | 0x00 | _endpointBuffers[ep].data;
+	_bufferDescriptorTable[ep][bdt_entry].flags |= 0x80;
+	
     _endpointBuffers[ep].txAB = 1 - _endpointBuffers[ep].txAB;
-	_endpointBuffers[ep].data = _endpointBuffers[ep].data ? 0 : 0x40;
+    _endpointBuffers[ep].data = _endpointBuffers[ep].data ? 0 : 0x40;
 
 	return true;
+}
+
+inline void USBFS::releaseDirectBuffer(uint8_t ep, uint8_t buffer)
+{
+	if(_endpointBuffers[ep].directTx[buffer] != NULL) {
+		if(_manager) _manager->releaseDirectBuffer(ep, _endpointBuffers[ep].directTx[buffer], _endpointBuffers[ep].directLength[buffer]);
+		_endpointBuffers[ep].directTx[buffer] = NULL;
+		_endpointBuffers[ep].directLength[buffer] = 0;
+	}
 }
 
 bool USBFS::sendBuffer(uint8_t ep, const uint8_t *data, uint32_t len) {
@@ -322,19 +344,22 @@ void USBFS::handleInterrupt() {
 				break;
 			case 0x09: // IN
                 TXOn();
-                if (_endpointBuffers[ep].length > 0) {
-                    toSend = min(_endpointBuffers[ep].size, _endpointBuffers[ep].length);
-                    enqueuePacket(ep, _endpointBuffers[ep].bufferPtr, toSend);
-                    _endpointBuffers[ep].length -= toSend;
-                    _endpointBuffers[ep].bufferPtr += toSend;
-                } else {
-                    if (_endpointBuffers[ep].buffer != NULL) {
-                        free(_endpointBuffers[ep].buffer);
-                        _endpointBuffers[ep].buffer = NULL;
-                    }
-                }
+				if(_endpointBuffers[ep].buffer != NULL) {
+					if (_endpointBuffers[ep].length > 0) {
+						toSend = min(_endpointBuffers[ep].size, _endpointBuffers[ep].length);
+						enqueuePacket(ep, _endpointBuffers[ep].bufferPtr, toSend);
+						_endpointBuffers[ep].length -= toSend;
+						_endpointBuffers[ep].bufferPtr += toSend;
+					} else {
+						free(_endpointBuffers[ep].buffer);
+						_endpointBuffers[ep].buffer = NULL;
+					}
+				}
 
-                if (_manager) _manager->onInPacket(ep, _endpointBuffers[ep].rx[U1STATbits.PPBI], _bufferDescriptorTable[ep][bdt_slot].flags >> 16);
+                if (_manager) {
+					if(bdt_slot & 0x02) releaseDirectBuffer(ep, U1STATbits.PPBI);					
+					_manager->onInPacket(ep, _endpointBuffers[ep].rx[U1STATbits.PPBI], _bufferDescriptorTable[ep][bdt_slot].flags >> 16);
+				}
 				break;
 			case 0x0d: // SETUP
 				_endpointBuffers[ep].data = 0x40;

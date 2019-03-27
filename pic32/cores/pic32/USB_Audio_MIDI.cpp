@@ -171,7 +171,7 @@ uint32_t Audio_MIDI::populateConfigurationDescriptor(uint8_t *buf) {
 }
 
 
-void Audio_MIDI::initDevice(USBManager *manager) {
+void Audio_MIDI::initDevice(IUSBManager *manager) {
     _manager = manager;
     _ifCtl = _manager->allocateInterface();
     _ifBulk = _manager->allocateInterface();

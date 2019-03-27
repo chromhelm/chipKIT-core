@@ -119,32 +119,24 @@ uint32_t CDCACM::populateConfigurationDescriptor(uint8_t *buf) {
     buf[i++] = 0x05;       // endpoint descriptor
     buf[i++] = 0x80 | _epBulk;       // endpoint IN address
     buf[i++] = 0x02;       // attributes: bulk
-    if (_manager->isHighSpeed()) {
-        buf[i++] = 0x00; 
-        buf[i++] = 0x02;     // packet size
-    } else {
-        buf[i++] = 0x40; 
-        buf[i++] = 0x00;     // packet size
-    }
+    
+    buf[i++] = CDCACM_BULKEP_SIZE & 0xff;
+    buf[i++] = (CDCACM_BULKEP_SIZE >> 8) & 0xff; // packet size
+    
     buf[i++] = 0x00;       // interval (ms)
 
     buf[i++] = 7;          // length
     buf[i++] = 0x05;       // endpoint descriptor
     buf[i++] = _epBulk;       // endpoint OUT address
     buf[i++] = 0x02;       // attributes: bulk
-    if (_manager->isHighSpeed()) {
-        buf[i++] = 0x00; 
-        buf[i++] = 0x02;     // packet size
-    } else {
-        buf[i++] = 0x40; 
-        buf[i++] = 0x00;     // packet size
-    }
+	buf[i++] = CDCACM_BULKEP_SIZE & 0xff;
+    buf[i++] = (CDCACM_BULKEP_SIZE >> 8) & 0xff; // packet size
     buf[i++] = 0x00;       // interval (ms)
     return i;
 }
 
 
-void CDCACM::initDevice(USBManager *manager) {
+void CDCACM::initDevice(IUSBManager *manager) {
     _manager = manager;
     _ifControl = _manager->allocateInterface();
     _ifBulk = _manager->allocateInterface();
@@ -158,13 +150,8 @@ bool CDCACM::getDescriptor(uint8_t __attribute__((unused)) ep, uint8_t __attribu
 
 void CDCACM::configureEndpoints() {
     _manager->addEndpoint(_epControl, EP_OUT, EP_CTL, 8, _ctlA, _ctlB);
-    if (_manager->isHighSpeed()) {
-        _manager->addEndpoint(_epBulk, EP_IN, EP_BLK, 512, _bulkRxA, _bulkRxB);
-        _manager->addEndpoint(_epBulk, EP_OUT, EP_BLK, 512, _bulkTxA, _bulkTxB);
-    } else {
-        _manager->addEndpoint(_epBulk, EP_IN, EP_BLK, 64, _bulkRxA, _bulkRxB);
-        _manager->addEndpoint(_epBulk, EP_OUT, EP_BLK, 64, _bulkTxA, _bulkTxB);
-    }
+    _manager->addEndpoint(_epBulk, EP_IN, EP_BLK, CDCACM_BULKEP_SIZE, _bulkRxA, _bulkRxB);
+    _manager->addEndpoint(_epBulk, EP_OUT, EP_BLK, CDCACM_BULKEP_SIZE, _bulkTxA, _bulkTxB);
 }
 
 
@@ -216,10 +203,9 @@ inline bool CDCACM::enqueuePacket()
 	if (avail > CDCACM_BULKEP_SIZE) {
             avail = CDCACM_BULKEP_SIZE;
         }
-
-        
-	if((_txTail + avail) > CDCACM_BUFFER_SIZE) {
-		avail -= (_txTail + avail) % CDCACM_BUFFER_SIZE;
+      
+	if(avail > (CDCACM_BUFFER_SIZE - _txTail)) {
+		avail = CDCACM_BUFFER_SIZE - _txTail;
 	}
 	
 	_manager->enqueuePacket(_epBulk, _txBuffer + _txTail, avail);
@@ -270,32 +256,10 @@ size_t CDCACM::write(uint8_t b) {
 
     if (_lineState == 0) return 0;
 
-    uint32_t h = _txHead;
-    uint32_t newhead = (h + 1) % CDCACM_BUFFER_SIZE;
-
-    // Wait for room
-    while (newhead == _txTail) {
-        h = _txHead;
-        newhead = (h + 1) % CDCACM_BUFFER_SIZE;
-    }
-
-    _txBuffer[h] = b;
-    _txHead = newhead;
-
-    if (_manager->canEnqueuePacket(_epBulk)) {
-        uint32_t s = disableInterrupts();
-		
-        enqueuePacket();
-		
-        restoreInterrupts(s);
-    }
-    return 1;
+    return write(b, true);
 }
 
 inline size_t CDCACM::write(uint8_t b, bool enqueuePacket) {
-
-    //if (_lineState == 0) return 0;
-
     uint32_t h = _txHead;
     uint32_t newhead = (h + 1) % CDCACM_BUFFER_SIZE;
 

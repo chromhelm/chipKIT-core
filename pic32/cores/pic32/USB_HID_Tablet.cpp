@@ -135,7 +135,7 @@ uint8_t HID_Tablet::getInterfaceCount() {
     return 1;
 }
 
-void HID_Tablet::initDevice(USBManager *manager) {
+void HID_Tablet::initDevice(IUSBManager *manager) {
     _manager = manager;
     _ifInt = _manager->allocateInterface();
     _epInt = _manager->allocateEndpoint();

@@ -408,6 +408,13 @@ void USBManager::onInPacket(uint8_t ep, uint8_t *data, uint32_t l) {
     }
 }
 
+void USBManager::releaseDirectBuffer(uint8_t ep, const uint8_t *data, uint32_t len)
+{
+    for (struct USBDeviceList *scan = _devices; scan; scan = scan->next) {
+        scan->device->releaseDirectBuffer(ep, _target, data, len);
+    }
+}
+
 void USBManager::onOutPacket(uint8_t ep, uint8_t *data, uint32_t l) {
     for (struct USBDeviceList *scan = _devices; scan; scan = scan->next) {
         if (scan->device->onOutPacket(ep, _target, data, l)) {

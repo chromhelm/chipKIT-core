@@ -55,6 +55,8 @@ struct epBuffer {
     uint32_t length;
     uint8_t *buffer;
     uint8_t *bufferPtr;
+	uint32_t directLength[2];
+	uint8_t *directTx[2];
 };
 
 struct DeviceDescriptor {
@@ -111,8 +113,58 @@ struct StringDescriptorHeader {
 #define EP_BLK 2
 #define EP_ISO 3
 
-class USBManager;
 class USBDevice;
+
+class IUSBManager {
+	public:
+        virtual void onSetupPacket(uint8_t ep, uint8_t *data, uint32_t l) = 0;
+        virtual void onInPacket(uint8_t ep, uint8_t *data, uint32_t l) = 0;
+        virtual void onOutPacket(uint8_t ep, uint8_t *data, uint32_t l) = 0;
+
+        virtual bool isEnumerated() = 0;
+        virtual void setEnumerated(bool e) = 0;
+
+        virtual bool isHighSpeed() = 0;
+
+        virtual void begin() = 0;
+        virtual void addDevice(USBDevice *d) = 0;
+        virtual void addDevice(USBDevice &d) = 0;
+
+        virtual uint8_t allocateInterface() = 0;
+        virtual uint8_t allocateEndpoint() = 0;
+        virtual uint8_t allocateString() = 0;
+
+        virtual bool addEndpoint(uint8_t id, uint8_t direction, uint8_t type, uint32_t size, uint8_t *a, uint8_t *b) = 0;
+
+        virtual bool sendBuffer(uint8_t ep, const uint8_t *data, uint32_t len) = 0;
+
+        virtual bool canEnqueuePacket(uint8_t ep) = 0;
+
+		virtual bool enqueuePacket(uint8_t ep, const uint8_t *data, uint32_t len) = 0;
+		
+		virtual bool enqueuePacket(uint8_t ep, const uint8_t *data, uint32_t len, bool copy, bool direct) = 0;
+		
+		virtual void releaseDirectBuffer(uint8_t ep, const uint8_t *data, uint32_t len) = 0;
+		
+		virtual uint8_t getNextBufferIndex(uint8_t ep) = 0;
+
+        virtual void haltEndpoint(uint8_t ep) = 0;
+
+        virtual void resumeEndpoint(uint8_t ep) = 0;
+
+        virtual bool isIdle(uint8_t ep) = 0;
+
+        virtual void end() = 0;
+
+        virtual void setSelfPowered() = 0;
+
+        virtual void setBusPowered() = 0;
+
+        virtual void setPowerLimit(int power) = 0;
+
+        virtual void resume() = 0;
+
+};
 
 class USBDriver {
 	public:
@@ -121,14 +173,18 @@ class USBDriver {
 		virtual bool disableUSB() = 0;      // Turn off USB
 		virtual bool addEndpoint(uint8_t id, uint8_t direction, uint8_t type, uint32_t size, uint8_t *a, uint8_t *b) = 0;    // Add an endpoint
 		virtual bool enqueuePacket(uint8_t ep, const uint8_t *data, uint32_t len) = 0;  // Queue a single packet on an endpoint
+		
+		virtual bool enqueuePacket(uint8_t ep, const uint8_t *data, uint32_t len, bool copy, bool directs) = 0;  // Queue a single packet on an endpoint
         virtual bool canEnqueuePacket(uint8_t ep) = 0;  // True if a packet can be enqueued
         virtual bool sendBuffer(uint8_t ep, const uint8_t *data, uint32_t len) = 0; // Send an entire buffer through and endpoint
 		virtual bool setAddress(uint8_t address) = 0;   // Set the device address
-        virtual void setManager(USBManager *mgr) {  // Add the manager object to this driver.
+        virtual void setManager(IUSBManager *mgr) {  // Add the manager object to this driver.
             _manager = mgr;
         }
 
         virtual bool isHighSpeed() = 0;
+		
+		virtual uint8_t getNextBufferIndex(uint8_t ep) = 0;
         virtual void haltEndpoint(uint8_t ep) = 0;
         virtual void resumeEndpoint(uint8_t ep) = 0;
 
@@ -138,7 +194,7 @@ class USBDriver {
         virtual void resume() = 0;
 
 
-        USBManager *_manager;
+        IUSBManager *_manager;
 };
 #ifdef __PIC32MX__
 class USBFS : public USBDriver {
@@ -156,18 +212,23 @@ class USBFS : public USBDriver {
         uint8_t _ctlTxB[64];
 
         volatile bool _inIsr;
-
+		inline void releaseDirectBuffer(uint8_t ep, uint8_t buffer);
 	public:
 		USBFS() : _enabledEndpoints(0), _inIsr(false) { _this = this; }
 		bool enableUSB();
 		bool disableUSB();
 		bool addEndpoint(uint8_t id, uint8_t direction, uint8_t type, uint32_t size, uint8_t *a, uint8_t *b);
-		bool enqueuePacket(uint8_t ep, const uint8_t *data, uint32_t len);
+		bool enqueuePacket(uint8_t ep, const uint8_t *data, uint32_t len) {
+			return enqueuePacket(ep, data, len, true, false);
+		}
+		bool enqueuePacket(uint8_t ep, const uint8_t *data, uint32_t len, bool copy, bool direct);
 		bool setAddress(uint8_t address);
         bool canEnqueuePacket(uint8_t ep);
         bool sendBuffer(uint8_t ep, const uint8_t *data, uint32_t len);
 
         bool isHighSpeed() { return false; }
+        
+        uint8_t getNextBufferIndex(uint8_t ep);
 
         void haltEndpoint(uint8_t __attribute__((unused)) ep) {}
         void resumeEndpoint(uint8_t __attribute__((unused)) ep) {}
@@ -217,7 +278,6 @@ class USBHS : public USBDriver {
         bool sendBuffer(uint8_t ep, const uint8_t *data, uint32_t len);
         int populateDefaultSerial(char *defSerial);
 
-
 		void handleInterrupt();
 
         void haltEndpoint(uint8_t ep);
@@ -244,7 +304,7 @@ struct USBDeviceList {
     struct USBDeviceList *next;
 };
 
-class USBManager {
+class USBManager : IUSBManager{
 	protected:
 		// Private functions and variables here
         USBDriver *_driver;
@@ -291,6 +351,8 @@ class USBManager {
         uint8_t allocateInterface();
         uint8_t allocateEndpoint();
         uint8_t allocateString();
+		
+		void releaseDirectBuffer(uint8_t ep, const uint8_t *data, uint32_t len);
 
         bool addEndpoint(uint8_t id, uint8_t direction, uint8_t type, uint32_t size, uint8_t *a, uint8_t *b) {
             return _driver->addEndpoint(id, direction, type, size, a, b);
@@ -316,6 +378,17 @@ class USBManager {
             }
             return true; // Honest, guv, we sent it!
         }
+        bool enqueuePacket(uint8_t ep, const uint8_t *data, uint32_t len, bool copy, bool direkt) {
+            if (_enumerated) {
+                return _driver->enqueuePacket(ep, data, len, copy, direkt);
+            }
+            return true; // Honest, guv, we sent it!
+        }
+        
+        uint8_t getNextBufferIndex(uint8_t ep)
+		{
+			return _driver->getNextBufferIndex(ep);
+		}	
 
         void haltEndpoint(uint8_t ep) {
             _driver->haltEndpoint(ep);
@@ -357,7 +430,7 @@ class USBDevice {
         virtual uint8_t getInterfaceCount() = 0;    // Returns the number of interfaces for this device
         virtual bool getStringDescriptor(uint8_t idx, uint16_t maxlen) = 0; // Send a string descriptor matching this index
         virtual uint32_t populateConfigurationDescriptor(uint8_t *buf) = 0; // Fills *buf with the config descriptor data. Returns the number of bytes used
-        virtual void initDevice(USBManager *manager) = 0;   // Initialize a device and set the manager object
+        virtual void initDevice(IUSBManager *manager) = 0;   // Initialize a device and set the manager object
         
         virtual bool getDescriptor(uint8_t ep, uint8_t target, uint8_t id, uint8_t maxlen) = 0; // Called when GET_DESCRIPTOR arrives
         virtual bool getReportDescriptor(uint8_t ep, uint8_t target, uint8_t id, uint8_t maxlen) = 0;   // called when GET_REPORT_DESCRIPTOR arrives
@@ -367,11 +440,22 @@ class USBDevice {
         virtual bool onInPacket(uint8_t ep, uint8_t target, uint8_t *data, uint32_t l) = 0; // Called when an IN packet is requested
         virtual bool onOutPacket(uint8_t ep, uint8_t target, uint8_t *data, uint32_t l) = 0;    // Called when an OUT packet arrives
         virtual void onEnumerated() = 0; // Called when enumeration is finished and the device is attached
+        virtual bool releaseDirectBuffer(uint8_t ep, uint8_t target, const uint8_t *data, uint32_t len)  { return false; };
 };
+
+#if defined (__PIC32MX__)
+#define CDCACM_BUFFER_SIZE 256
+#define CDCACM_BULKEP_SIZE 64
+#define CDCACM_BUFFER_HIGH 4
+#elif defined(__PIC32MZ__)
+#define CDCACM_BUFFER_SIZE 256
+#define CDCACM_BULKEP_SIZE 512
+#define CDCACM_BUFFER_HIGH 8
+#endif
 
 class CDCACM : public USBDevice, public Stream {
     private:
-        USBManager *_manager;
+        IUSBManager *_manager;
         uint8_t _ifControl;
         uint8_t _ifBulk;
         uint8_t _epControl;
@@ -384,27 +468,14 @@ class CDCACM : public USBDevice, public Stream {
         uint8_t _stopBits;
         uint8_t _dataBits;
         uint8_t _parity;
-#if defined (__PIC32MX__)
-#define CDCACM_BUFFER_SIZE 256
-#define CDCACM_BULKEP_SIZE 64
+
         uint8_t _rxBuffer[CDCACM_BUFFER_SIZE];
         uint8_t _txBuffer[CDCACM_BUFFER_SIZE];
         uint8_t _bulkRxA[CDCACM_BULKEP_SIZE];
         uint8_t _bulkRxB[CDCACM_BULKEP_SIZE];
         uint8_t _bulkTxA[CDCACM_BULKEP_SIZE];
         uint8_t _bulkTxB[CDCACM_BULKEP_SIZE];
-#define CDCACM_BUFFER_HIGH 4
-#elif defined(__PIC32MZ__)
-#define CDCACM_BUFFER_SIZE 256
-#define CDCACM_BULKEP_SIZE 512
-        uint8_t _rxBuffer[CDCACM_BUFFER_SIZE];
-        uint8_t _txBuffer[CDCACM_BUFFER_SIZE];
-        uint8_t _bulkRxA[CDCACM_BULKEP_SIZE];
-        uint8_t _bulkRxB[CDCACM_BULKEP_SIZE];
-        uint8_t _bulkTxA[CDCACM_BULKEP_SIZE];
-        uint8_t _bulkTxB[CDCACM_BULKEP_SIZE];
-#define CDCACM_BUFFER_HIGH 8
-#endif
+
         volatile uint32_t _txHead;
         volatile uint32_t _txTail;
         volatile uint32_t _rxHead;
@@ -422,7 +493,7 @@ class CDCACM : public USBDevice, public Stream {
         uint16_t getDescriptorLength();
         uint8_t getInterfaceCount();
         uint32_t populateConfigurationDescriptor(uint8_t *buf);
-        void initDevice(USBManager *manager);
+        void initDevice(IUSBManager *manager);
         bool getDescriptor(uint8_t ep, uint8_t target, uint8_t id, uint8_t maxlen);
         bool getReportDescriptor(uint8_t __attribute__((unused)) ep, uint8_t __attribute__((unused)) target, uint8_t __attribute__((unused)) id, uint8_t __attribute__((unused)) maxlen)  { return false; }
         bool getStringDescriptor(uint8_t __attribute__((unused)) idx, uint16_t __attribute__((unused)) maxlen) { return false; }
@@ -800,7 +871,7 @@ struct KeyReport {
 
 class HID_Keyboard : public USBDevice, public Print {
     private:
-        USBManager *_manager;
+        IUSBManager *_manager;
         uint8_t _ifInt;
         uint8_t _epInt;
         struct KeyReport _keyReport;
@@ -817,7 +888,7 @@ class HID_Keyboard : public USBDevice, public Print {
         uint16_t getDescriptorLength();
         uint8_t getInterfaceCount();
         uint32_t populateConfigurationDescriptor(uint8_t *buf);
-        void initDevice(USBManager *manager);
+        void initDevice(IUSBManager *manager);
         bool getDescriptor(uint8_t ep, uint8_t target, uint8_t id, uint8_t maxlen);
         bool getReportDescriptor(uint8_t ep, uint8_t target, uint8_t id, uint8_t maxlen);
         bool getStringDescriptor(uint8_t __attribute__((unused)) idx, uint16_t __attribute__((unused)) maxlen)  { return false; }
@@ -879,7 +950,7 @@ class HID_Keyboard : public USBDevice, public Print {
 
 class HID_Media : public USBDevice {
     private:
-        USBManager *_manager;
+        IUSBManager *_manager;
         uint8_t _ifInt;
         uint8_t _epInt;
         void sendReport(uint8_t id, uint16_t data);
@@ -894,7 +965,7 @@ class HID_Media : public USBDevice {
         uint16_t getDescriptorLength();
         uint8_t getInterfaceCount();
         uint32_t populateConfigurationDescriptor(uint8_t *buf);
-        void initDevice(USBManager *manager);
+        void initDevice(IUSBManager *manager);
         bool getDescriptor(uint8_t ep, uint8_t target, uint8_t id, uint8_t maxlen);
         bool getReportDescriptor(uint8_t ep, uint8_t target, uint8_t id, uint8_t maxlen);
         bool getStringDescriptor(uint8_t __attribute__((unused)) idx, uint16_t __attribute__((unused)) maxlen)  { return false; }
@@ -926,7 +997,7 @@ class HID_Media : public USBDevice {
 
 class HID_Mouse : public USBDevice {
     private:
-        USBManager *_manager;
+        IUSBManager *_manager;
         uint8_t _ifInt;
         uint8_t _epInt;
         void sendReport(const uint8_t *b, uint8_t l);
@@ -939,7 +1010,7 @@ class HID_Mouse : public USBDevice {
         uint16_t getDescriptorLength();
         uint8_t getInterfaceCount();
         uint32_t populateConfigurationDescriptor(uint8_t *buf);
-        void initDevice(USBManager *manager);
+        void initDevice(IUSBManager *manager);
         bool getDescriptor(uint8_t ep, uint8_t target, uint8_t id, uint8_t maxlen);
         bool getReportDescriptor(uint8_t ep, uint8_t target, uint8_t id, uint8_t maxlen);
         bool getStringDescriptor(uint8_t __attribute__((unused)) idx, uint16_t __attribute__((unused)) maxlen)  { return false; }
@@ -963,7 +1034,7 @@ class HID_Mouse : public USBDevice {
 
 class HID_Tablet : public USBDevice {
     private:
-        USBManager *_manager;
+        IUSBManager *_manager;
         uint8_t _ifInt;
         uint8_t _epInt;
         void sendReport(const uint8_t *b, uint8_t l);
@@ -980,7 +1051,7 @@ class HID_Tablet : public USBDevice {
         uint16_t getDescriptorLength();
         uint8_t getInterfaceCount();
         uint32_t populateConfigurationDescriptor(uint8_t *buf);
-        void initDevice(USBManager *manager);
+        void initDevice(IUSBManager *manager);
         bool getDescriptor(uint8_t ep, uint8_t target, uint8_t id, uint8_t maxlen);
         bool getReportDescriptor(uint8_t ep, uint8_t target, uint8_t id, uint8_t maxlen);
         bool getStringDescriptor(uint8_t __attribute__((unused)) idx, uint16_t __attribute__((unused)) maxlen) { return false; }
@@ -1021,7 +1092,7 @@ struct JoystickReport {
 
 class HID_Joystick : public USBDevice {
     private:
-        USBManager *_manager;
+        IUSBManager *_manager;
         uint8_t _ifInt;
         uint8_t _epInt;
         void sendReport(const uint8_t *b, uint8_t l);
@@ -1033,7 +1104,7 @@ class HID_Joystick : public USBDevice {
         uint16_t getDescriptorLength();
         uint8_t getInterfaceCount();
         uint32_t populateConfigurationDescriptor(uint8_t *buf);
-        void initDevice(USBManager *manager);
+        void initDevice(IUSBManager *manager);
         bool getDescriptor(uint8_t ep, uint8_t target, uint8_t id, uint8_t maxlen);
         bool getReportDescriptor(uint8_t ep, uint8_t target, uint8_t id, uint8_t maxlen);
         bool getStringDescriptor(uint8_t __attribute__((unused)) idx, uint16_t __attribute__((unused)) maxlen) { return false; }
@@ -1062,7 +1133,7 @@ class HID_Joystick : public USBDevice {
 
 class HID_Raw : public USBDevice {
     private:
-        USBManager *_manager;
+        IUSBManager *_manager;
         uint8_t _ifInt;
         uint8_t _epInt;
         uint8_t _intRxA[64];
@@ -1079,7 +1150,7 @@ class HID_Raw : public USBDevice {
         uint16_t getDescriptorLength();
         uint8_t getInterfaceCount();
         uint32_t populateConfigurationDescriptor(uint8_t *buf);
-        void initDevice(USBManager *manager);
+        void initDevice(IUSBManager *manager);
         bool getDescriptor(uint8_t ep, uint8_t target, uint8_t id, uint8_t maxlen);
         bool getReportDescriptor(uint8_t ep, uint8_t target, uint8_t id, uint8_t maxlen);
         bool getStringDescriptor(uint8_t __attribute__((unused)) idx, uint16_t __attribute__((unused)) maxlen) { return false; }
@@ -1101,7 +1172,7 @@ class HID_Raw : public USBDevice {
 
 class Audio_MIDI : public USBDevice {
     private:
-        USBManager *_manager;
+        IUSBManager *_manager;
         uint8_t _ifCtl;
         uint8_t _ifBulk;
         uint8_t _epBulk;
@@ -1124,7 +1195,7 @@ class Audio_MIDI : public USBDevice {
         uint16_t getDescriptorLength();
         uint8_t getInterfaceCount();
         uint32_t populateConfigurationDescriptor(uint8_t *buf);
-        void initDevice(USBManager *manager);
+        void initDevice(IUSBManager *manager);
         bool getDescriptor(uint8_t ep, uint8_t target, uint8_t id, uint8_t maxlen);
         bool getReportDescriptor(uint8_t ep, uint8_t target, uint8_t id, uint8_t maxlen);
         bool getStringDescriptor(uint8_t __attribute__((unused)) idx, uint16_t __attribute__((unused)) maxlen) { return false; }

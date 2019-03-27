@@ -137,7 +137,7 @@ uint32_t HID_Media::populateConfigurationDescriptor(uint8_t *buf) {
 }
 
 
-void HID_Media::initDevice(USBManager *manager) {
+void HID_Media::initDevice(IUSBManager *manager) {
     _manager = manager;
     _ifInt = _manager->allocateInterface();
     _epInt = _manager->allocateEndpoint();

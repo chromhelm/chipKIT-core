@@ -101,7 +101,7 @@ uint32_t HID_Raw::populateConfigurationDescriptor(uint8_t *buf) {
 }
 
 
-void HID_Raw::initDevice(USBManager *manager) {
+void HID_Raw::initDevice(IUSBManager *manager) {
     _manager = manager;
     _ifInt = _manager->allocateInterface();
     _epInt = _manager->allocateEndpoint();

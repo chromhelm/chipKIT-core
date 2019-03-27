@@ -117,7 +117,7 @@ uint32_t HID_Joystick::populateConfigurationDescriptor(uint8_t *buf) {
 }
 
 
-void HID_Joystick::initDevice(USBManager *manager) {
+void HID_Joystick::initDevice(IUSBManager *manager) {
     _manager = manager;
     _ifInt = _manager->allocateInterface();
     _epInt = _manager->allocateEndpoint();

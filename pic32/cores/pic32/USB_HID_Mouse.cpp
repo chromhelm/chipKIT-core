@@ -110,7 +110,7 @@ uint32_t HID_Mouse::populateConfigurationDescriptor(uint8_t *buf) {
 }
 
 
-void HID_Mouse::initDevice(USBManager *manager) {
+void HID_Mouse::initDevice(IUSBManager *manager) {
     _manager = manager;
     _ifInt = _manager->allocateInterface();
     _epInt = _manager->allocateEndpoint();
